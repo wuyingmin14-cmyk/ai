@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import signal
 import ssl
 import tempfile
 import time
@@ -27,12 +28,13 @@ if DASHSCOPE_API_KEY:
 
 QWEN_IMAGE_EDIT_MODELS = [
     m.strip()
-    for m in os.getenv("QWEN_IMAGE_EDIT_MODELS", "").split(",")
+    for m in os.getenv("QWEN_IMAGE_EDIT_MODELS", "qwen-image-2.0-pro").split(",")
     if m.strip()
 ]
-QWEN_IMAGE_EDIT_TIMEOUT = int(os.getenv("QWEN_IMAGE_EDIT_TIMEOUT", "20"))
-WANX_IMAGE_EDIT_MODEL = os.getenv("WANX_IMAGE_EDIT_MODEL", "wanx2.1-imageedit")
-WANX_IMAGE_EDIT_TIMEOUT = int(os.getenv("WANX_IMAGE_EDIT_TIMEOUT", "45"))
+QWEN_IMAGE_EDIT_TIMEOUT = int(os.getenv("QWEN_IMAGE_EDIT_TIMEOUT", "55"))
+AI_TRYON_HARD_TIMEOUT = int(os.getenv("AI_TRYON_HARD_TIMEOUT", "60"))
+WANX_IMAGE_EDIT_MODEL = os.getenv("WANX_IMAGE_EDIT_MODEL", "")
+WANX_IMAGE_EDIT_TIMEOUT = int(os.getenv("WANX_IMAGE_EDIT_TIMEOUT", "30"))
 
 app = Flask(__name__)
 CORS(app)
@@ -115,6 +117,28 @@ def image_suffix(mime: str) -> str:
     if mime == "image/webp":
         return ".webp"
     return ".jpg"
+
+
+def run_with_timeout(fn, seconds: int):
+    if seconds <= 0:
+        return fn()
+
+    def raise_timeout(_signum, _frame):
+        raise TimeoutError("AI tryon timed out")
+
+    try:
+        old_handler = signal.signal(signal.SIGALRM, raise_timeout)
+        signal.alarm(seconds)
+        try:
+            return fn()
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+    except ValueError:
+        return fn()
+    except TimeoutError as e:
+        log.warning("%s", e)
+        return None
 
 
 def file_to_data_uri(path: str) -> Optional[str]:
@@ -377,6 +401,7 @@ def health():
         "styles_available": len(STYLE_LIBRARY),
         "qwen_image_edit": bool(DASHSCOPE_API_KEY),
         "qwen_image_edit_models": QWEN_IMAGE_EDIT_MODELS,
+        "ai_tryon_hard_timeout": AI_TRYON_HARD_TIMEOUT,
         "wanx_image_edit_model": WANX_IMAGE_EDIT_MODEL,
         "wanx_image_edit_timeout": WANX_IMAGE_EDIT_TIMEOUT,
     })
@@ -395,7 +420,10 @@ def tryon():
     f = request.files["hand_image"]
     hand_bytes = f.read()
     hand_uri = data_uri_from_bytes(hand_bytes, f.mimetype)
-    result = wanx_image_tryon(hand_bytes, f.mimetype, style_id) or qwen_image_tryon(hand_uri, style_id)
+    result = run_with_timeout(
+        lambda: qwen_image_tryon(hand_uri, style_id) or wanx_image_tryon(hand_bytes, f.mimetype, style_id),
+        AI_TRYON_HARD_TIMEOUT,
+    )
     advice = fit_advice(style_id)
     if not result:
         return jsonify({
@@ -436,7 +464,10 @@ def recommend_tryon():
     hand_uri = data_uri_from_bytes(hand_bytes, f.mimetype)
     rec = recommend_style(hand_uri)
     style_id = clamp(safe_int((rec.get("recommendations") or [{}])[0].get("style_id"), 20), 1, len(STYLE_LIBRARY))
-    result = wanx_image_tryon(hand_bytes, f.mimetype, style_id) or qwen_image_tryon(hand_uri, style_id)
+    result = run_with_timeout(
+        lambda: qwen_image_tryon(hand_uri, style_id) or wanx_image_tryon(hand_bytes, f.mimetype, style_id),
+        AI_TRYON_HARD_TIMEOUT,
+    )
     advice = fit_advice(style_id, rec.get("analysis"))
     return jsonify({
         "result_image": result["result_image"] if result else hand_uri,
