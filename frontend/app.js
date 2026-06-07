@@ -216,8 +216,9 @@ async function runTryOn(whiteMode) {
 }
 
 async function callRealAPI(file, styleId, whiteMode = false) {
+  const uploadFile = await prepareUploadImage(file);
   const form = new FormData();
-  form.append('hand_image', file);
+  form.append('hand_image', uploadFile);
   form.append('style_id', String(styleId));
   appendTuning(form);
   if (whiteMode) form.append('white_mode', '1');
@@ -448,6 +449,34 @@ function escapeHtml(s) {
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
+
+async function prepareUploadImage(file, maxLong = 1600, quality = 0.9) {
+  if (!file.type.startsWith('image/')) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxLong / Math.max(bitmap.width, bitmap.height));
+    if (scale >= 1 && file.size <= 2 * 1024 * 1024) {
+      bitmap.close?.();
+      return file;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob) return file;
+    const name = file.name.replace(/\.[^.]+$/, '') || 'hand';
+    return new File([blob], `${name}.jpg`, { type: 'image/jpeg' });
+  } catch (e) {
+    console.warn('image compression skipped', e);
+    return file;
+  }
+}
+
 function fileToDataURL(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();

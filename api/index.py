@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import os
 import re
 import ssl
@@ -31,6 +32,8 @@ QWEN_IMAGE_EDIT_TIMEOUT = int(os.getenv("QWEN_IMAGE_EDIT_TIMEOUT", "180"))
 
 app = Flask(__name__)
 CORS(app)
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("nail-tryon-vercel")
 
 
 def load_style_library() -> list:
@@ -200,6 +203,7 @@ def build_tryon_prompt(style_id: int) -> str:
 
 def qwen_image_tryon(hand_uri: str, style_id: int) -> Optional[dict]:
     if not DASHSCOPE_API_KEY:
+        log.warning("qwen image edit skipped: DASHSCOPE_API_KEY is missing")
         return None
     content = []
     ref_uri = file_to_data_uri(style_reference_path(style_id))
@@ -208,21 +212,33 @@ def qwen_image_tryon(hand_uri: str, style_id: int) -> Optional[dict]:
     content.append({"image": hand_uri})
     content.append({"text": build_tryon_prompt(style_id)})
 
+    last_error = ""
     for model in QWEN_IMAGE_EDIT_MODELS:
         try:
+            log.info("qwen image edit tryon: model=%s style=%s", model, style_id)
             resp = MultiModalConversation.call(
                 model=model,
                 messages=[{"role": "user", "content": content}],
                 request_timeout=QWEN_IMAGE_EDIT_TIMEOUT,
             )
             if getattr(resp, "status_code", 0) != 200:
+                last_error = f"{getattr(resp, 'status_code', '')} {getattr(resp, 'message', '')}".strip()
+                log.warning("qwen image edit status failed: model=%s %s", model, last_error)
                 continue
             image_uri = extract_image_uri(resp)
+            if not image_uri:
+                last_error = "no output image in response"
+                log.warning("qwen image edit no output image: model=%s", model)
+                continue
             result_uri = download_image_as_data_uri(image_uri) if image_uri else None
             if result_uri:
                 return {"result_image": result_uri, "model": model}
-        except Exception:
+        except Exception as e:
+            last_error = str(e)
+            log.warning("qwen image edit failed: model=%s error=%s", model, e)
             continue
+    if last_error:
+        log.warning("qwen image edit exhausted: %s", last_error)
     return None
 
 
@@ -298,9 +314,18 @@ def tryon():
     f = request.files["hand_image"]
     hand_uri = data_uri_from_bytes(f.read(), f.mimetype)
     result = qwen_image_tryon(hand_uri, style_id)
-    if not result:
-        return jsonify({"error": "AI image edit failed"}), 503
     advice = fit_advice(style_id)
+    if not result:
+        return jsonify({
+            "result_image": hand_uri,
+            "style_id": style_id,
+            "style": STYLE_LIBRARY[style_id - 1],
+            "nails_detected": 0,
+            "debug_white_mode": False,
+            "render_engine": "ai-fallback-original",
+            "error": "AI image edit failed; returned original image",
+            **advice,
+        })
     return jsonify({
         "result_image": result["result_image"],
         "style_id": style_id,
@@ -331,14 +356,14 @@ def recommend_tryon():
     result = qwen_image_tryon(hand_uri, style_id)
     advice = fit_advice(style_id, rec.get("analysis"))
     return jsonify({
-        "result_image": result["result_image"] if result else "",
+        "result_image": result["result_image"] if result else hand_uri,
         "style_id": style_id,
         "style": STYLE_LIBRARY[style_id - 1],
         "nails_detected": 5 if result else 0,
         "debug_white_mode": False,
         "analysis": rec.get("analysis", {}),
         "recommendations": rec.get("recommendations", []),
-        "render_engine": f"qwen-image-edit:{result['model']}" if result else "failed",
+        "render_engine": f"qwen-image-edit:{result['model']}" if result else "ai-fallback-original",
         **advice,
     })
 
