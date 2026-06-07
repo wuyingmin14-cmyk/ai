@@ -30,9 +30,9 @@ from dashscope import MultiModalConversation
 # ==================== 配置 ====================
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 DASHSCOPE_API_KEY = os.getenv('DASHSCOPE_API_KEY')
-if not DASHSCOPE_API_KEY:
-    raise RuntimeError("DASHSCOPE_API_KEY not set in .env")
-dashscope.api_key = DASHSCOPE_API_KEY
+DASHSCOPE_CONFIGURED = bool(DASHSCOPE_API_KEY)
+if DASHSCOPE_CONFIGURED:
+    dashscope.api_key = DASHSCOPE_API_KEY
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 STYLES_DIR = os.path.join(PROJECT_ROOT, 'assets', 'styles')
@@ -311,6 +311,9 @@ def parse_json_loose(text: str) -> Any:
 
 def call_qwen_vl(content: list, max_retries: int = 2) -> Optional[str]:
     """调用 qwen-vl-plus，带重试"""
+    if not DASHSCOPE_CONFIGURED:
+        log.warning("DASHSCOPE_API_KEY not configured")
+        return None
     for attempt in range(max_retries):
         try:
             resp = MultiModalConversation.call(
@@ -465,7 +468,7 @@ def build_qwen_tryon_prompt(style_id: int, nails_count: int = 0) -> str:
 
 def qwen_image_tryon(hand_bgr: np.ndarray, style_id: int, nails_count: int = 0) -> Optional[dict]:
     """Use Qwen image editing to regenerate the nails instead of planar compositing."""
-    if not USE_QWEN_IMAGE_EDIT or not QWEN_IMAGE_EDIT_MODELS:
+    if not DASHSCOPE_CONFIGURED or not USE_QWEN_IMAGE_EDIT or not QWEN_IMAGE_EDIT_MODELS:
         return None
     hand_uri = bgr_to_data_uri(hand_bgr, max_long=1600, quality=92)
     content = []
