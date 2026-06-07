@@ -165,6 +165,14 @@ def download_image_as_data_uri(url: str, timeout: int = 90) -> Optional[str]:
     return data_uri_from_bytes(data, ctype)
 
 
+def normalize_result_image_uri(image_uri: str) -> Optional[str]:
+    if not image_uri:
+        return None
+    if image_uri.startswith("data:image/") or image_uri.startswith("http://") or image_uri.startswith("https://"):
+        return image_uri
+    return None
+
+
 def extract_image_uri(resp) -> Optional[str]:
     candidates = []
 
@@ -279,7 +287,7 @@ def wanx_image_tryon(hand_bytes: bytes, mime: str, style_id: int) -> Optional[di
             status = output.get("task_status")
             if status == "SUCCEEDED":
                 image_uri = extract_image_uri(resp)
-                result_uri = download_image_as_data_uri(image_uri) if image_uri else None
+                result_uri = normalize_result_image_uri(image_uri) if image_uri else None
                 if result_uri:
                     return {"result_image": result_uri, "model": WANX_IMAGE_EDIT_MODEL}
                 log.warning("wanx image edit succeeded without output image")
@@ -333,7 +341,7 @@ def qwen_image_tryon(hand_uri: str, style_id: int) -> Optional[dict]:
                 last_error = "no output image in response"
                 log.warning("qwen image edit no output image: model=%s", model)
                 continue
-            result_uri = download_image_as_data_uri(image_uri) if image_uri else None
+            result_uri = normalize_result_image_uri(image_uri) if image_uri else None
             if result_uri:
                 return {"result_image": result_uri, "model": model}
         except Exception as e:
