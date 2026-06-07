@@ -31,8 +31,8 @@ QWEN_IMAGE_EDIT_MODELS = [
     for m in os.getenv("QWEN_IMAGE_EDIT_MODELS", "qwen-image-2.0-pro").split(",")
     if m.strip()
 ]
-QWEN_IMAGE_EDIT_TIMEOUT = int(os.getenv("QWEN_IMAGE_EDIT_TIMEOUT", "55"))
-AI_TRYON_HARD_TIMEOUT = int(os.getenv("AI_TRYON_HARD_TIMEOUT", "60"))
+QWEN_IMAGE_EDIT_TIMEOUT = int(os.getenv("QWEN_IMAGE_EDIT_TIMEOUT", "180"))
+AI_TRYON_HARD_TIMEOUT = int(os.getenv("AI_TRYON_HARD_TIMEOUT", "180"))
 WANX_IMAGE_EDIT_MODEL = os.getenv("WANX_IMAGE_EDIT_MODEL", "")
 WANX_IMAGE_EDIT_TIMEOUT = int(os.getenv("WANX_IMAGE_EDIT_TIMEOUT", "30"))
 
@@ -337,6 +337,10 @@ def qwen_image_tryon(hand_uri: str, style_id: int) -> Optional[dict]:
             resp = MultiModalConversation.call(
                 model=model,
                 messages=[{"role": "user", "content": content}],
+                n=1,
+                watermark=False,
+                prompt_extend=True,
+                negative_prompt="flat stickers, black borders, square patches, wrong nail position, covering skin, deformed fingers, changed background, text, watermark",
                 request_timeout=QWEN_IMAGE_EDIT_TIMEOUT,
             )
             if getattr(resp, "status_code", 0) != 200:
