@@ -208,7 +208,8 @@ async function runTryOn(whiteMode) {
   } catch (err) {
     clearInterval(advancer);
     loader.hidden = true;
-    handleError(err);
+    console.error(err);
+    showResult(buildFallbackResult(state.selectedStyleId, '网络超时，显示原图'));
   } finally {
     tryOnBtn.disabled = false;
     whitePreviewBtn.disabled = false;
@@ -227,6 +228,20 @@ async function callRealAPI(file, styleId, whiteMode = false) {
     throw new Error(`HTTP ${r.status}: ${await r.text()}`);
   }
   return await r.json();
+}
+
+function buildFallbackResult(styleId, message = 'AI生成失败，显示原图') {
+  const style = state.styles.find(s => s.id === styleId);
+  return {
+    result_image: '',
+    style_id: styleId,
+    style,
+    nails_detected: 0,
+    render_engine: 'ai-fallback-original',
+    fit_score: '-',
+    fit_text: message,
+    trend_text: '请稍后重试，或换一张更清晰、指甲区域更近的照片。',
+  };
 }
 
 function showResult(data) {

@@ -42,6 +42,13 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("nail-tryon-vercel")
 
 
+@app.after_request
+def add_no_cache_headers(resp):
+    if request.path in ("/", "/app.js", "/styles.css") or request.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
+
 def load_style_library() -> list:
     if not os.path.exists(STYLE_MANIFEST_PATH):
         return [
