@@ -435,7 +435,7 @@ def tryon():
     advice = fit_advice(style_id)
     if not result:
         return jsonify({
-            "result_image": hand_uri,
+            "result_image": "",
             "style_id": style_id,
             "style": STYLE_LIBRARY[style_id - 1],
             "nails_detected": 0,
@@ -478,7 +478,7 @@ def recommend_tryon():
     )
     advice = fit_advice(style_id, rec.get("analysis"))
     return jsonify({
-        "result_image": result["result_image"] if result else hand_uri,
+        "result_image": result["result_image"] if result else "",
         "style_id": style_id,
         "style": STYLE_LIBRARY[style_id - 1],
         "nails_detected": 5 if result else 0,

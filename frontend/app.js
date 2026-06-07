@@ -231,12 +231,16 @@ async function callRealAPI(file, styleId, whiteMode = false) {
 
 function showResult(data) {
   resultOriginal.src = preview.src;
-  resultGenerated.src = data.result_image;
+  resultGenerated.src = data.result_image || preview.src;
   styleBadge.textContent = data.style_id;
   const style = state.styles.find(s => s.id === data.style_id) || data.style;
   styleName.textContent = style ? style.name : `#${data.style_id}`;
   nailCount.textContent = `检测指甲 ${data.nails_detected} 个`;
-  resultHint.textContent = data.debug_white_mode ? '白模模式' : '已渲染';
+  if (data.render_engine === 'ai-fallback-original') {
+    resultHint.textContent = 'AI生成失败，显示原图';
+  } else {
+    resultHint.textContent = data.debug_white_mode ? '白模模式' : '已渲染';
+  }
   if (data.fit_text || data.trend_text || data.fit_score) {
     fitScore.textContent = data.fit_score ? `${data.fit_score}/100` : '-';
     fitText.textContent = data.fit_text || '';
