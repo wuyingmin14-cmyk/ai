@@ -12,6 +12,13 @@ backend/.env
 models/
 test_b_grade/
 assets/test/
+assets/hand-samples/
+assets/samples/
+assets/nail-tips/
+assets/nail-tips-v2/
+assets/nail-tips-v3/
+assets/nail-tips-v4/
+assets/nail-tips-generated/
 *.log
 
 # Python/editor caches
