@@ -4,11 +4,13 @@ import logging
 import os
 import re
 import ssl
+import tempfile
+import time
 import urllib.request
 from typing import Optional, Any
 
 import dashscope
-from dashscope import MultiModalConversation
+from dashscope import ImageSynthesis, MultiModalConversation
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
@@ -25,10 +27,12 @@ if DASHSCOPE_API_KEY:
 
 QWEN_IMAGE_EDIT_MODELS = [
     m.strip()
-    for m in os.getenv("QWEN_IMAGE_EDIT_MODELS", "qwen-image-2.0-pro,qwen-image-edit-plus,qwen-image-edit").split(",")
+    for m in os.getenv("QWEN_IMAGE_EDIT_MODELS", "").split(",")
     if m.strip()
 ]
-QWEN_IMAGE_EDIT_TIMEOUT = int(os.getenv("QWEN_IMAGE_EDIT_TIMEOUT", "180"))
+QWEN_IMAGE_EDIT_TIMEOUT = int(os.getenv("QWEN_IMAGE_EDIT_TIMEOUT", "20"))
+WANX_IMAGE_EDIT_MODEL = os.getenv("WANX_IMAGE_EDIT_MODEL", "wanx2.1-imageedit")
+WANX_IMAGE_EDIT_TIMEOUT = int(os.getenv("WANX_IMAGE_EDIT_TIMEOUT", "45"))
 
 app = Flask(__name__)
 CORS(app)
@@ -103,6 +107,14 @@ def data_uri_from_bytes(data: bytes, mime: str = "image/jpeg") -> str:
     if not mime or not mime.startswith("image/"):
         mime = "image/jpeg"
     return f"data:{mime};base64," + base64.b64encode(data).decode()
+
+
+def image_suffix(mime: str) -> str:
+    if mime == "image/png":
+        return ".png"
+    if mime == "image/webp":
+        return ".webp"
+    return ".jpg"
 
 
 def file_to_data_uri(path: str) -> Optional[str]:
@@ -201,9 +213,76 @@ def build_tryon_prompt(style_id: int) -> str:
 输出一张真实照片风格的完整手部试戴图，不要拼图，不要文字，不要边框。"""
 
 
+def wanx_image_tryon(hand_bytes: bytes, mime: str, style_id: int) -> Optional[dict]:
+    if not DASHSCOPE_API_KEY or not WANX_IMAGE_EDIT_MODEL:
+        return None
+
+    hand_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=image_suffix(mime)) as tmp:
+            tmp.write(hand_bytes)
+            hand_path = tmp.name
+
+        ref_path = style_reference_path(style_id)
+        kwargs = {
+            "model": WANX_IMAGE_EDIT_MODEL,
+            "prompt": build_tryon_prompt(style_id),
+            "base_image_url": hand_path,
+            "function": "description_edit",
+            "n": 1,
+        }
+        if os.path.exists(ref_path):
+            kwargs["ref_img"] = ref_path
+
+        log.info("wanx image edit tryon: model=%s style=%s", WANX_IMAGE_EDIT_MODEL, style_id)
+        task = ImageSynthesis.async_call(**kwargs)
+        if getattr(task, "status_code", 0) != 200:
+            log.warning("wanx image edit task failed: %s %s", getattr(task, "status_code", ""), getattr(task, "message", ""))
+            return None
+
+        task_id = (getattr(task, "output", {}) or {}).get("task_id")
+        if not task_id:
+            log.warning("wanx image edit missing task_id")
+            return None
+
+        deadline = time.time() + WANX_IMAGE_EDIT_TIMEOUT
+        while time.time() < deadline:
+            resp = ImageSynthesis.fetch(task_id)
+            if getattr(resp, "status_code", 0) != 200:
+                log.warning("wanx image edit fetch failed: %s %s", getattr(resp, "status_code", ""), getattr(resp, "message", ""))
+                return None
+            output = getattr(resp, "output", {}) or {}
+            status = output.get("task_status")
+            if status == "SUCCEEDED":
+                image_uri = extract_image_uri(resp)
+                result_uri = download_image_as_data_uri(image_uri) if image_uri else None
+                if result_uri:
+                    return {"result_image": result_uri, "model": WANX_IMAGE_EDIT_MODEL}
+                log.warning("wanx image edit succeeded without output image")
+                return None
+            if status in ("FAILED", "CANCELED", "UNKNOWN"):
+                log.warning("wanx image edit ended: status=%s message=%s", status, output.get("message", ""))
+                return None
+            time.sleep(2)
+
+        log.warning("wanx image edit timeout after %ss", WANX_IMAGE_EDIT_TIMEOUT)
+        return None
+    except Exception as e:
+        log.warning("wanx image edit failed: %s", e)
+        return None
+    finally:
+        if hand_path:
+            try:
+                os.unlink(hand_path)
+            except OSError:
+                pass
+
+
 def qwen_image_tryon(hand_uri: str, style_id: int) -> Optional[dict]:
     if not DASHSCOPE_API_KEY:
         log.warning("qwen image edit skipped: DASHSCOPE_API_KEY is missing")
+        return None
+    if not QWEN_IMAGE_EDIT_MODELS:
         return None
     content = []
     ref_uri = file_to_data_uri(style_reference_path(style_id))
@@ -298,6 +377,8 @@ def health():
         "styles_available": len(STYLE_LIBRARY),
         "qwen_image_edit": bool(DASHSCOPE_API_KEY),
         "qwen_image_edit_models": QWEN_IMAGE_EDIT_MODELS,
+        "wanx_image_edit_model": WANX_IMAGE_EDIT_MODEL,
+        "wanx_image_edit_timeout": WANX_IMAGE_EDIT_TIMEOUT,
     })
 
 
@@ -312,8 +393,9 @@ def tryon():
         return jsonify({"error": "missing hand_image"}), 400
     style_id = clamp(safe_int(request.form.get("style_id"), 20), 1, len(STYLE_LIBRARY))
     f = request.files["hand_image"]
-    hand_uri = data_uri_from_bytes(f.read(), f.mimetype)
-    result = qwen_image_tryon(hand_uri, style_id)
+    hand_bytes = f.read()
+    hand_uri = data_uri_from_bytes(hand_bytes, f.mimetype)
+    result = wanx_image_tryon(hand_bytes, f.mimetype, style_id) or qwen_image_tryon(hand_uri, style_id)
     advice = fit_advice(style_id)
     if not result:
         return jsonify({
@@ -350,10 +432,11 @@ def recommend_tryon():
     if "hand_image" not in request.files:
         return jsonify({"error": "missing hand_image"}), 400
     f = request.files["hand_image"]
-    hand_uri = data_uri_from_bytes(f.read(), f.mimetype)
+    hand_bytes = f.read()
+    hand_uri = data_uri_from_bytes(hand_bytes, f.mimetype)
     rec = recommend_style(hand_uri)
     style_id = clamp(safe_int((rec.get("recommendations") or [{}])[0].get("style_id"), 20), 1, len(STYLE_LIBRARY))
-    result = qwen_image_tryon(hand_uri, style_id)
+    result = wanx_image_tryon(hand_bytes, f.mimetype, style_id) or qwen_image_tryon(hand_uri, style_id)
     advice = fit_advice(style_id, rec.get("analysis"))
     return jsonify({
         "result_image": result["result_image"] if result else hand_uri,
