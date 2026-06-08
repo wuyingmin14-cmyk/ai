@@ -324,7 +324,9 @@ def qwen_image_tryon(hand_uri: str, style_id: int) -> Optional[dict]:
     if not QWEN_IMAGE_EDIT_MODELS:
         return None
     content = []
-    ref_uri = file_to_data_uri(style_reference_path(style_id))
+    # Style 20 is fully described in the prompt. Skipping the large reference
+    # image makes production generation much faster and less likely to time out.
+    ref_uri = None if style_id == 20 else file_to_data_uri(style_reference_path(style_id))
     if ref_uri:
         content.append({"image": ref_uri})
     content.append({"image": hand_uri})

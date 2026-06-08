@@ -469,7 +469,7 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-async function prepareUploadImage(file, maxLong = 1600, quality = 0.9) {
+async function prepareUploadImage(file, maxLong = 1024, quality = 0.82) {
   if (!file.type.startsWith('image/')) return file;
   try {
     const bitmap = await createImageBitmap(file);
